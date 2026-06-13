@@ -5,6 +5,11 @@ description = "Procedural Gazebo world generator for the HW1 wall-following assi
 requires-python = ">=3.9"
 dependencies = []
 
+# Core worldgen is stdlib-only.  The 'video' extra (worldgen video /
+# worldgen eval --video) needs matplotlib, plus ffmpeg on PATH for mp4.
+[project.optional-dependencies]
+video = ["matplotlib"]
+
 [project.scripts]
 worldgen = "worldgen.cli:main"
 

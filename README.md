@@ -117,6 +117,40 @@ end of the wall is not a tracking error.
 A markdown table is printed and written to `docker/output/eval_report.md`;
 `worldgen eval` exits non-zero if any world FAILs.
 
+## Recording videos
+
+A top-down clip of any recorded run, built from the data itself: the walls as
+the lidar actually sensed them, the live 2-D scan sweeping the wall each frame,
+the robot path and pose, a stats box (time, cte, running mean |cte|, speed),
+and a cross-track-error-vs-time panel with the ±0.2 m band.
+
+```bash
+# render one recorded run (uses docker/output/<name>_traj.csv etc.)
+uv run --extra video worldgen video \
+    --traj ../../docker/output/walls_one_sided_traj.csv \
+    --cte  ../../docker/output/walls_one_sided.csv \
+    --scan ../../docker/output/walls_one_sided_scan.csv \
+    --title walls_one_sided --out walls_one_sided.mp4
+
+# or render a clip per world as part of scoring
+uv run --extra video worldgen eval --video
+```
+
+Everything is drawn in the **odom frame**. Wheel odometry drifts a few degrees
+relative to the Gazebo world and there is no world-pose topic in this sim, so
+painting the walls from the lidar keeps the robot, its scan, and the walls
+mutually consistent instead of registering odom against the static `.world`
+geometry.
+
+Rendering is an **optional** feature. It needs `matplotlib` (the `video`
+extra) plus `ffmpeg` on PATH for mp4 output; without ffmpeg it falls back to an
+animated GIF. The recorder (`docker/record_run.sh`) writes the three CSVs:
+`<name>_traj.csv` (`t,x,y,yaw`), `<name>.csv` (`t,cte`), and `<name>_scan.csv`
+(`t,angle_min,angle_increment,ranges...`).
+
+> Use `uv run --extra video`, not `--with matplotlib`: the installed
+> `worldgen` entry point pins the project venv and ignores `--with` overlays.
+
 ## Using a single world interactively
 
 `docker/run.sh` accepts any world name and copies host-generated worlds into

@@ -372,12 +372,15 @@ def write_report(results, report_path):
 # ------------------------------------------------------------------ driver
 
 def evaluate(worlds, worlds_dir, output_dir, docker_dir=None,
-             score_only=False, default_secs=90):
+             score_only=False, default_secs=90, make_video=False):
     """Run (unless score_only) + score a list of (name, secs|None) worlds.
 
-    Course sidecars are loaded from ``worlds_dir``.  Returns metrics list.
+    Course sidecars are loaded from ``worlds_dir``.  With ``make_video`` a
+    top-down clip (walls + path + live lidar + cte) is rendered per world into
+    ``output_dir``.  Returns the metrics list.
     """
     worlds_dir = Path(worlds_dir)
+    output_dir = Path(output_dir)
     results = []
     for name, secs in worlds:
         secs = secs or default_secs
@@ -389,5 +392,30 @@ def evaluate(worlds, worlds_dir, output_dir, docker_dir=None,
         crs = course_mod.load_course(sidecar)
         if not score_only:
             run_record(docker_dir or find_docker_dir(), name, secs)
-        results.append(score_world(name, crs, output_dir))
+        m = score_world(name, crs, output_dir)
+        if make_video:
+            m["video"] = _render_video(name, crs, worlds_dir, output_dir)
+        results.append(m)
     return results
+
+
+def _render_video(name, course, worlds_dir, output_dir):
+    """Render one world's clip; never let a render failure abort the eval."""
+    from . import render  # lazy: matplotlib is an optional extra
+    traj = output_dir / f"{name}_traj.csv"
+    if not traj.is_file():
+        return None
+    world = Path(worlds_dir) / f"{name}.world"
+    try:
+        out = render.render_run(
+            traj,
+            output_dir / f"{name}.mp4",
+            cte_csv=output_dir / f"{name}.csv",
+            scan_csv=output_dir / f"{name}_scan.csv",
+            world_path=world if world.is_file() else None,
+            title=name)
+        print(f"  video: {out}")
+        return out
+    except Exception as exc:  # noqa: BLE001 - report and keep scoring
+        print(f"  video FAILED for {name}: {exc}", file=sys.stderr)
+        return None

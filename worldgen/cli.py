@@ -10,6 +10,12 @@ Examples:
     worldgen random --seed 5 --closed
     worldgen suite --seeds 1,2,3
     worldgen eval --score-only
+    worldgen eval gen_gaps --video
+    worldgen video ../wall_following_assigment/worlds/walls_one_sided.world \
+        --traj ../../docker/output/improved_one_traj.csv \
+        --cte ../../docker/output/improved_one.csv \
+        --scan ../../docker/output/improved_one_scan.csv \
+        --out improved_one.mp4 --title "improved walls_one_sided"
     worldgen preview ../wall_following_assigment/worlds/walls_one_sided.world
 """
 
@@ -291,7 +297,8 @@ def _cmd_eval(args):
 
     results = evaluate.evaluate(
         worlds, worlds_dir, output_dir, docker_dir=docker_dir,
-        score_only=args.score_only, default_secs=args.secs or 90)
+        score_only=args.score_only, default_secs=args.secs or 90,
+        make_video=args.video)
 
     print()
     print(evaluate.format_table(results))
@@ -385,6 +392,27 @@ def main(argv=None):
     evl.add_argument("--report", type=Path, default=None,
                      help="markdown report path (default "
                           "<output-dir>/eval_report.md)")
+    evl.add_argument("--video", action="store_true",
+                     help="also render a top-down clip per world (needs "
+                          "matplotlib + ffmpeg)")
+
+    vid = sub.add_parser(
+        "video", help="render a top-down clip for one recorded run")
+    vid.add_argument("world_file", type=Path, nargs="?", default=None,
+                     help="optional .world (the wall map is built from lidar, "
+                          "so this is not required)")
+    vid.add_argument("--traj", type=Path, required=True,
+                     help="trajectory CSV (t,x,y[,yaw])")
+    vid.add_argument("--cte", type=Path, default=None,
+                     help="cross-track-error CSV (t,cte)")
+    vid.add_argument("--scan", type=Path, default=None,
+                     help="lidar CSV (t,angle_min,angle_increment,ranges...)")
+    vid.add_argument("--out", type=Path, required=True,
+                     help="output .mp4 (or .gif if ffmpeg is missing)")
+    vid.add_argument("--title", default="")
+    vid.add_argument("--fps", type=int, default=20)
+    vid.add_argument("--seconds", type=float, default=30.0,
+                     help="target clip length (trajectory is resampled)")
 
     args = parser.parse_args(argv)
 
@@ -407,6 +435,15 @@ def main(argv=None):
 
     if args.cmd == "eval":
         return _cmd_eval(args)
+
+    if args.cmd == "video":
+        from . import render
+        out = render.render_run(
+            args.traj, args.out, cte_csv=args.cte, scan_csv=args.scan,
+            world_path=args.world_file, title=args.title, fps=args.fps,
+            seconds=args.seconds)
+        print(f"wrote {out}")
+        return 0
 
     out_dir = args.out or _default_worlds_dir()
     stamp = datetime.date.today().isoformat()
