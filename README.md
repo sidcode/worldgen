@@ -153,74 +153,109 @@ animated GIF. The recorder (`docker/record_run.sh`) writes the three CSVs:
 > Use `uv run --extra video`, not `--with matplotlib`: the installed
 > `worldgen` entry point pins the project venv and ignores `--with` overlays.
 
-## Showcase: original vs improved on the generated suite
+## Showcase: three followers on the generated suite
 
 This is the whole point of worldgen: take a follower, throw a battery of
-generated courses at it, score every run, and watch where it breaks. Below is
-the same PID follower in two versions, the original handout solution
-(`wall_follower_og.py`) and the improved one, recorded headless on five
-generated worlds and scored by the harness.
+generated courses at it, score every run, and watch where it breaks. Here are
+three versions of the same PID follower, recorded headless on five generated
+worlds and scored by the harness:
 
-| world | what it stresses | original follower | improved follower |
-|-------|------------------|-------------------|-------------------|
-| `gen_zigzag`     | zigzag, ±60° corners        | WARN · mean&nbsp;0.40&nbsp;m · 100% | **PASS · mean&nbsp;0.13&nbsp;m · 100%** |
-| `gen_gaps`       | doorway gaps (wall-loss)    | FAIL · mean&nbsp;2.88&nbsp;m · 29%  | **PASS · mean&nbsp;0.16&nbsp;m · 100%** |
-| `gen_curve_left` | constant 135° left arc      | FAIL · mean&nbsp;0.69&nbsp;m · 100% | **PASS · mean&nbsp;0.11&nbsp;m · 100%** |
-| `gen_s_curve`    | gentle S-curve              | PASS · mean&nbsp;0.11&nbsp;m · 100% | PASS · mean&nbsp;0.11&nbsp;m · 100% |
-| `gen_gauntlet`   | mixed inside+outside corners | WARN · mean&nbsp;0.18&nbsp;m · 66%  | FAIL · mean&nbsp;2.27&nbsp;m · 52% |
+* **original** (`wall_follower_og.py`) — the handout's two-beam solution.
+* **improved** (`wall_follower.py`) — line-fit wall estimate, PID on curvature,
+  inside-corner anticipation, a reacquire state for wall-loss.
+* **robust** (`robust_wall_follower.py`) — the improved follower with a
+  corner-hardened reacquire (see the diagnosis below).
 
-`mean` is mean |cte| over the on-course portion of the run; the percentage is
-course completion. Verdicts are the harness's (`PASS` > 90% complete and mean
+| world | what it stresses | original | improved | robust |
+|-------|------------------|----------|----------|--------|
+| `gen_zigzag`     | zigzag, ±60° corners         | WARN · 0.40&nbsp;m · 100% | **PASS · 0.13&nbsp;m · 100%** | **PASS · 0.12&nbsp;m · 100%** |
+| `gen_gaps`       | doorway gaps (wall-loss)     | FAIL · 2.88&nbsp;m · 29%  | **PASS · 0.16&nbsp;m · 100%** | **PASS · 0.19&nbsp;m · 100%** |
+| `gen_curve_left` | constant 135° left arc       | FAIL · 0.69&nbsp;m · 100% | **PASS · 0.11&nbsp;m · 100%** | **PASS · 0.10&nbsp;m · 100%** |
+| `gen_s_curve`    | gentle S-curve               | PASS · 0.11&nbsp;m · 100% | PASS · 0.11&nbsp;m · 100% | PASS · 0.11&nbsp;m · 100% |
+| `gen_gauntlet`   | mixed inside+outside corners | WARN · 0.18&nbsp;m · 66%  | FAIL · 2.27&nbsp;m · 52%  | **WARN · 0.32&nbsp;m · 74%** |
+
+Each cell is `verdict · mean |cte| · completion`. `mean |cte|` is over the
+on-course portion; verdicts are the harness's (`PASS` > 90% complete and mean
 |cte| < 0.3 m, `FAIL` if stalled / < 60% / > 0.5 m, else `WARN`).
 
 The improved follower wins clearly on the corners and the doorway gaps, where
 the original either overshoots the bend or loses the wall at the opening and
-never reacquires. They tie on the gentle S-curve. And on `gen_gauntlet` the
-improved follower actually **regresses**: it tracks tightly until one tight
-outside corner, then loses the wall and drives off into open space (confirmed
-on a re-run). The original happens to crawl further before it gives up. That
-is the harness doing its job, finding a real failure mode rather than a tidy
-win, which is exactly why generating odd courses and scoring them is worth it.
+never reacquires. But on `gen_gauntlet` the improved follower **regresses**:
+it tracks tightly until a sharp outside corner, loses the wall, and drives off
+into open space (mean |cte| blows up to 2.3 m, confirmed on a re-run). That is
+the harness doing its job, finding a real failure mode instead of a tidy win.
+
+### Why the gauntlet breaks the improved follower, and the robust fix
+
+At a 90° **outside** corner the left wall vanishes for a stretch. The improved
+follower's `REACQUIRE` state is a blind, open-loop fixed-radius left arc
+(`reacquire_curvature = 0.35` → radius ≈ 2.9 m), with a "spiral guard" that,
+after ~200° of commanded turn, gives up and **drives straight**. On the
+gauntlet the next wall is only ~2 m away, so the 2.9 m arc swings wide, never
+pulls the wall back into the fit sector, and the straight-drive then carries the
+robot off into open space. It survives `gen_curve_left` only because there the
+wall never actually disappears.
+
+`robust_wall_follower.py` keeps the improved follower's `TRACK`, `BLOCKED` and
+wall-estimation logic byte-for-byte (so the worlds it already passes keep
+passing) and changes **only** the reacquire behaviour:
+
+* it never drives straight — the wall is always on the left, so a lost wall is
+  always rounded by turning left, and the robot can no longer wander off;
+* the arc radius is **adaptive**: it tightens as the nearest left return closes
+  (hugging a sharp outside corner) and relaxes to the original gentle arc when
+  the wall is mid/far (bridging a doorway gap);
+* it keeps its forward speed through the turn so the corner arc actually
+  progresses instead of collapsing into an in-place loop.
+
+Result: no regressions on the four worlds the improved follower passes, and on
+the gauntlet it goes from a catastrophic FAIL (52%, 2.3 m) to the best run of
+the three (WARN, 74%, 0.32 m) with no wander. The gauntlet's tight alternating
+corners still keep it short of a full PASS — an honest remaining edge.
+
+### gen_gauntlet — mixed inside + outside corners (the differentiator)
+
+<table><tr>
+<td align="center"><b>original</b><br><img src="assets/gen_gauntlet_og.gif" width="300"></td>
+<td align="center"><b>improved (drives off)</b><br><img src="assets/gen_gauntlet_improved.gif" width="300"></td>
+<td align="center"><b>robust</b><br><img src="assets/gen_gauntlet_robust.gif" width="300"></td>
+</tr></table>
 
 ### gen_zigzag — zigzag, ±60° corners
 
 <table><tr>
-<td align="center"><b>original</b><br><img src="assets/gen_zigzag_og.gif" width="400"></td>
-<td align="center"><b>improved</b><br><img src="assets/gen_zigzag_improved.gif" width="400"></td>
+<td align="center"><b>original</b><br><img src="assets/gen_zigzag_og.gif" width="300"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_zigzag_improved.gif" width="300"></td>
+<td align="center"><b>robust</b><br><img src="assets/gen_zigzag_robust.gif" width="300"></td>
 </tr></table>
 
 ### gen_gaps — doorway gaps, wall-loss and reacquire
 
 <table><tr>
-<td align="center"><b>original</b><br><img src="assets/gen_gaps_og.gif" width="400"></td>
-<td align="center"><b>improved</b><br><img src="assets/gen_gaps_improved.gif" width="400"></td>
+<td align="center"><b>original</b><br><img src="assets/gen_gaps_og.gif" width="300"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_gaps_improved.gif" width="300"></td>
+<td align="center"><b>robust</b><br><img src="assets/gen_gaps_robust.gif" width="300"></td>
 </tr></table>
 
 ### gen_curve_left — constant-radius 135° left arc
 
 <table><tr>
-<td align="center"><b>original</b><br><img src="assets/gen_curve_left_og.gif" width="400"></td>
-<td align="center"><b>improved</b><br><img src="assets/gen_curve_left_improved.gif" width="400"></td>
+<td align="center"><b>original</b><br><img src="assets/gen_curve_left_og.gif" width="300"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_curve_left_improved.gif" width="300"></td>
+<td align="center"><b>robust</b><br><img src="assets/gen_curve_left_robust.gif" width="300"></td>
 </tr></table>
 
 ### gen_s_curve — gentle S-curve
 
 <table><tr>
-<td align="center"><b>original</b><br><img src="assets/gen_s_curve_og.gif" width="400"></td>
-<td align="center"><b>improved</b><br><img src="assets/gen_s_curve_improved.gif" width="400"></td>
+<td align="center"><b>original</b><br><img src="assets/gen_s_curve_og.gif" width="300"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_s_curve_improved.gif" width="300"></td>
+<td align="center"><b>robust</b><br><img src="assets/gen_s_curve_robust.gif" width="300"></td>
 </tr></table>
 
-### gen_gauntlet — mixed inside + outside corners (improved loses the wall)
-
-<table><tr>
-<td align="center"><b>original</b><br><img src="assets/gen_gauntlet_og.gif" width="400"></td>
-<td align="center"><b>improved</b><br><img src="assets/gen_gauntlet_improved.gif" width="400"></td>
-</tr></table>
-
-To reproduce: record both followers on a world with `docker/run.sh record
-<world> <secs>` (improved) and `docker/run.sh record-og <world> <secs>`
-(original), then render each with `worldgen video` and score with
-`worldgen eval`.
+To reproduce: record a follower on a world with `docker/run.sh record <world>
+<secs>` (improved), `record-og` (original) or `record-robust` (robust), then
+render each with `worldgen video` and score with `worldgen eval`.
 
 ## Using a single world interactively
 
