@@ -168,50 +168,56 @@ worlds and scored by the harness:
 
 | world | what it stresses | original | improved | robust |
 |-------|------------------|----------|----------|--------|
-| `gen_zigzag`     | zigzag, ±60° corners         | WARN · 0.40&nbsp;m · 100% | **PASS · 0.13&nbsp;m · 100%** | **PASS · 0.12&nbsp;m · 100%** |
-| `gen_gaps`       | doorway gaps (wall-loss)     | FAIL · 2.88&nbsp;m · 29%  | **PASS · 0.16&nbsp;m · 100%** | **PASS · 0.19&nbsp;m · 100%** |
-| `gen_curve_left` | constant 135° left arc       | FAIL · 0.69&nbsp;m · 100% | **PASS · 0.11&nbsp;m · 100%** | **PASS · 0.10&nbsp;m · 100%** |
+| `gen_zigzag`     | zigzag, ±60° corners         | WARN · 0.40&nbsp;m · 100% | PASS · 0.13&nbsp;m · 100% | **PASS · 0.11&nbsp;m · 100%** |
+| `gen_gaps`       | doorway gaps (wall-loss)     | FAIL · 2.88&nbsp;m · 29%  | **PASS · 0.16&nbsp;m · 100%** | **PASS · 0.17&nbsp;m · 100%** |
+| `gen_curve_left` | constant 135° left arc       | FAIL · 0.69&nbsp;m · 100% | PASS · 0.11&nbsp;m · 100% | **PASS · 0.10&nbsp;m · 100%** |
 | `gen_s_curve`    | gentle S-curve               | PASS · 0.11&nbsp;m · 100% | PASS · 0.11&nbsp;m · 100% | PASS · 0.11&nbsp;m · 100% |
-| `gen_gauntlet`   | mixed inside+outside corners | WARN · 0.18&nbsp;m · 66%  | FAIL · 2.27&nbsp;m · 52%  | **WARN · 0.32&nbsp;m · 74%** |
+| `gen_gauntlet`   | mixed inside+outside corners | WARN · 0.18&nbsp;m · 66%  | FAIL · 2.27&nbsp;m · 52%  | **PASS · 0.17&nbsp;m · 100%** |
 
 Each cell is `verdict · mean |cte| · completion`. `mean |cte|` is over the
 on-course portion; verdicts are the harness's (`PASS` > 90% complete and mean
-|cte| < 0.3 m, `FAIL` if stalled / < 60% / > 0.5 m, else `WARN`).
+|cte| < 0.3 m, `FAIL` if stalled / < 60% / > 0.5 m, else `WARN`). The robust
+follower is the only one that passes all five.
 
 The improved follower wins clearly on the corners and the doorway gaps, where
 the original either overshoots the bend or loses the wall at the opening and
 never reacquires. But on `gen_gauntlet` the improved follower **regresses**:
 it tracks tightly until a sharp outside corner, loses the wall, and drives off
 into open space (mean |cte| blows up to 2.3 m, confirmed on a re-run). That is
-the harness doing its job, finding a real failure mode instead of a tidy win.
+the harness doing its job, finding a real failure mode instead of a tidy win,
+and it is what motivated the robust follower below.
 
 ### Why the gauntlet breaks the improved follower, and the robust fix
 
-At a 90° **outside** corner the left wall vanishes for a stretch. The improved
-follower's `REACQUIRE` state is a blind, open-loop fixed-radius left arc
-(`reacquire_curvature = 0.35` → radius ≈ 2.9 m), with a "spiral guard" that,
-after ~200° of commanded turn, gives up and **drives straight**. On the
-gauntlet the next wall is only ~2 m away, so the 2.9 m arc swings wide, never
-pulls the wall back into the fit sector, and the straight-drive then carries the
-robot off into open space. It survives `gen_curve_left` only because there the
-wall never actually disappears.
+At a 90° **outside** corner — and at the **end of a wall** — the left wall
+vanishes for a stretch. The improved follower's `REACQUIRE` state is a blind,
+open-loop fixed-radius left arc (`reacquire_curvature = 0.35` → radius ≈ 2.9 m),
+with a "spiral guard" that, after ~200° of commanded turn, gives up and
+**drives straight**. On the gauntlet the next wall is only ~2 m away, so the
+2.9 m arc swings wide, never pulls the wall back into the fit sector, and the
+straight-drive then carries the robot off into open space. It survives
+`gen_curve_left` only because there the wall never actually disappears.
 
 `robust_wall_follower.py` keeps the improved follower's `TRACK`, `BLOCKED` and
 wall-estimation logic byte-for-byte (so the worlds it already passes keep
-passing) and changes **only** the reacquire behaviour:
+passing) and changes **only** the reacquire behaviour, so it gracefully rounds
+the end of a wall:
 
 * it never drives straight — the wall is always on the left, so a lost wall is
   always rounded by turning left, and the robot can no longer wander off;
-* the arc radius is **adaptive**: it tightens as the nearest left return closes
-  (hugging a sharp outside corner) and relaxes to the original gentle arc when
-  the wall is mid/far (bridging a doorway gap);
-* it keeps its forward speed through the turn so the corner arc actually
-  progresses instead of collapsing into an in-place loop.
+* it rounds a **wall end / sharp outside corner** with a ~`desired`-radius left
+  turn and *keeps that turn going with forward motion while the wall is briefly
+  out of view*, so it wraps around the wall tip and picks the wall back up on
+  the far side (now on its new left) instead of spinning in place or coasting
+  off;
+* the arc relaxes to the original gentle radius when the wall is mid/far, so it
+  still bridges a doorway gap rather than U-turning at it.
 
-Result: no regressions on the four worlds the improved follower passes, and on
-the gauntlet it goes from a catastrophic FAIL (52%, 2.3 m) to the best run of
-the three (WARN, 74%, 0.32 m) with no wander. The gauntlet's tight alternating
-corners still keep it short of a full PASS — an honest remaining edge.
+Result: no regressions on the four worlds the improved follower already passes
+(and a slightly tighter `cte` on the corners), and the gauntlet goes from a
+catastrophic FAIL (52%, 2.3 m, drives off) to a clean **PASS (100%, 0.17 m)** —
+the robust follower wraps each outside corner and wall end and stays on course
+the whole way.
 
 ### gen_gauntlet — mixed inside + outside corners (the differentiator)
 
