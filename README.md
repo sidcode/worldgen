@@ -124,6 +124,8 @@ the lidar actually sensed them, the live 2-D scan sweeping the wall each frame,
 the robot path and pose, a stats box (time, cte, running mean |cte|, speed),
 and a cross-track-error-vs-time panel with the ±0.2 m band.
 
+![top-down clip of the follower on walls_one_sided](assets/walls_one_sided.gif)
+
 ```bash
 # render one recorded run (uses docker/output/<name>_traj.csv etc.)
 uv run --extra video worldgen video \
@@ -150,6 +152,75 @@ animated GIF. The recorder (`docker/record_run.sh`) writes the three CSVs:
 
 > Use `uv run --extra video`, not `--with matplotlib`: the installed
 > `worldgen` entry point pins the project venv and ignores `--with` overlays.
+
+## Showcase: original vs improved on the generated suite
+
+This is the whole point of worldgen: take a follower, throw a battery of
+generated courses at it, score every run, and watch where it breaks. Below is
+the same PID follower in two versions, the original handout solution
+(`wall_follower_og.py`) and the improved one, recorded headless on five
+generated worlds and scored by the harness.
+
+| world | what it stresses | original follower | improved follower |
+|-------|------------------|-------------------|-------------------|
+| `gen_zigzag`     | zigzag, ±60° corners        | WARN · mean&nbsp;0.40&nbsp;m · 100% | **PASS · mean&nbsp;0.13&nbsp;m · 100%** |
+| `gen_gaps`       | doorway gaps (wall-loss)    | FAIL · mean&nbsp;2.88&nbsp;m · 29%  | **PASS · mean&nbsp;0.16&nbsp;m · 100%** |
+| `gen_curve_left` | constant 135° left arc      | FAIL · mean&nbsp;0.69&nbsp;m · 100% | **PASS · mean&nbsp;0.11&nbsp;m · 100%** |
+| `gen_s_curve`    | gentle S-curve              | PASS · mean&nbsp;0.11&nbsp;m · 100% | PASS · mean&nbsp;0.11&nbsp;m · 100% |
+| `gen_gauntlet`   | mixed inside+outside corners | WARN · mean&nbsp;0.18&nbsp;m · 66%  | FAIL · mean&nbsp;2.27&nbsp;m · 52% |
+
+`mean` is mean |cte| over the on-course portion of the run; the percentage is
+course completion. Verdicts are the harness's (`PASS` > 90% complete and mean
+|cte| < 0.3 m, `FAIL` if stalled / < 60% / > 0.5 m, else `WARN`).
+
+The improved follower wins clearly on the corners and the doorway gaps, where
+the original either overshoots the bend or loses the wall at the opening and
+never reacquires. They tie on the gentle S-curve. And on `gen_gauntlet` the
+improved follower actually **regresses**: it tracks tightly until one tight
+outside corner, then loses the wall and drives off into open space (confirmed
+on a re-run). The original happens to crawl further before it gives up. That
+is the harness doing its job, finding a real failure mode rather than a tidy
+win, which is exactly why generating odd courses and scoring them is worth it.
+
+### gen_zigzag — zigzag, ±60° corners
+
+<table><tr>
+<td align="center"><b>original</b><br><img src="assets/gen_zigzag_og.gif" width="400"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_zigzag_improved.gif" width="400"></td>
+</tr></table>
+
+### gen_gaps — doorway gaps, wall-loss and reacquire
+
+<table><tr>
+<td align="center"><b>original</b><br><img src="assets/gen_gaps_og.gif" width="400"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_gaps_improved.gif" width="400"></td>
+</tr></table>
+
+### gen_curve_left — constant-radius 135° left arc
+
+<table><tr>
+<td align="center"><b>original</b><br><img src="assets/gen_curve_left_og.gif" width="400"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_curve_left_improved.gif" width="400"></td>
+</tr></table>
+
+### gen_s_curve — gentle S-curve
+
+<table><tr>
+<td align="center"><b>original</b><br><img src="assets/gen_s_curve_og.gif" width="400"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_s_curve_improved.gif" width="400"></td>
+</tr></table>
+
+### gen_gauntlet — mixed inside + outside corners (improved loses the wall)
+
+<table><tr>
+<td align="center"><b>original</b><br><img src="assets/gen_gauntlet_og.gif" width="400"></td>
+<td align="center"><b>improved</b><br><img src="assets/gen_gauntlet_improved.gif" width="400"></td>
+</tr></table>
+
+To reproduce: record both followers on a world with `docker/run.sh record
+<world> <secs>` (improved) and `docker/run.sh record-og <world> <secs>`
+(original), then render each with `worldgen video` and score with
+`worldgen eval`.
 
 ## Using a single world interactively
 
