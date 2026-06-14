@@ -70,7 +70,7 @@ _WORLD_HEADER = """<sdf version='1.6'>
       <ode>
         <solver>
           <type>quick</type>
-          <iters>1000</iters>
+          <iters>100</iters>
           <sor>1.3</sor>
           <use_dynamic_moi_rescaling>0</use_dynamic_moi_rescaling>
         </solver>
@@ -83,7 +83,9 @@ _WORLD_HEADER = """<sdf version='1.6'>
       </ode>
       <max_step_size>0.01</max_step_size>
       <real_time_factor>1</real_time_factor>
-      <real_time_update_rate>100</real_time_update_rate>
+      <!-- 0 = step as fast as the CPU allows (headless eval runs faster than
+           real time; the physics result is unchanged, only wall-clock speed). -->
+      <real_time_update_rate>0</real_time_update_rate>
     </physics>
     <gravity>0 0 -9.8</gravity>
     <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
@@ -100,6 +102,15 @@ _WORLD_HEADER = """<sdf version='1.6'>
       <elevation>0</elevation>
       <heading_deg>0</heading_deg>
     </spherical_coordinates>
+    <!-- Ground-truth model poses on /gazebo/model_states. Wheel odometry drifts
+         under coarse/fast physics; the eval recorder uses this true pose so
+         completion stays accurate at any real-time factor. -->
+    <plugin name='gazebo_ros_state' filename='libgazebo_ros_state.so'>
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>50.0</update_rate>
+    </plugin>
 """
 
 _WALL_TEMPLATE = """    <model name='{name}'>

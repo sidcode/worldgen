@@ -66,6 +66,15 @@ PRESETS = {
                      (8.0, -90.0), (12.0, None)],
         "doc": "Mixed inside + outside corners back to back.",
     },
+    "serpentine": {
+        "segments": [(12.0, 90.0), (5.0, 90.0),      # lane 1 E, U-turn up (L,L)
+                     (12.0, -90.0), (5.0, -90.0),     # lane 2 W, U-turn up (R,R)
+                     (12.0, 90.0), (5.0, 90.0),       # lane 3 E, U-turn up (L,L)
+                     (12.0, -90.0), (5.0, -90.0),     # lane 4 W, U-turn up
+                     (12.0, None)],                   # lane 5 E
+        "doc": "Boustrophedon (back-and-forth) corridor; a long maze-like run "
+               "of alternating left/right U-turns around wall ends.",
+    },
     "room": {
         "room": True,
         "doc": "Closed rectangular room; endless clockwise loop with four "

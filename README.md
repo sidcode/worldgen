@@ -106,16 +106,27 @@ trajectory CSVs into `docker/output/`), then scores against the sidecar:
 | `dist(m)` | distance travelled along the course |
 | `stall` | robot stopped advancing ≥ 8 s mid-course → likely crash |
 
-cte and the trajectory are timestamped off a shared clock, and the trajectory
-is transformed from the odom frame into the course world frame via the sidecar
-spawn pose. Once forward progress peaks (the robot reaches the end of a finite
-course and drives off the wall), later cte is **not** scored — driving off the
-end of the wall is not a tracking error.
+cte and the trajectory are timestamped off a shared clock. The trajectory is the
+robot's **ground-truth pose** (from a `gazebo_ros_state` plugin in the generated
+worlds), shifted into the course world frame via the sidecar spawn pose; using
+the true pose instead of wheel odometry keeps completion accurate even when the
+sim runs far faster than real time (see below). Once forward progress peaks (the
+robot reaches the end of a finite course and drives off the wall), later cte is
+**not** scored, since driving off the end of the wall is not a tracking error.
 
 **Verdicts:** `PASS` if completion > 90 %, mean |cte| < 0.3 m, and no stall;
 `FAIL` if stalled, completion < 60 %, or mean |cte| > 0.5 m; `WARN` otherwise.
 A markdown table is printed and written to `docker/output/eval_report.md`;
 `worldgen eval` exits non-zero if any world FAILs.
+
+**Fast headless eval.** The generated worlds set `real_time_update_rate` to 0
+and the ODE solver to 100 iterations, so headless `gzserver` steps as fast as the
+CPU allows (several times real time) without changing the physics result. The
+follower is purely reactive to the lidar, so its behaviour is unchanged; only the
+wall-clock per run drops. Wheel odometry does drift under the coarse/fast
+contacts, which is exactly why the recorder logs the ground-truth pose for
+scoring. (The two provided graded worlds are left at stock physics and carry no
+extra plugin, so a grader's real-time run is unaffected.)
 
 ## Recording videos
 
@@ -124,7 +135,7 @@ the lidar actually sensed them, the live 2-D scan sweeping the wall each frame,
 the robot path and pose, a stats box (time, cte, running mean |cte|, speed),
 and a cross-track-error-vs-time panel with the ±0.2 m band.
 
-![top-down clip of the follower on walls_one_sided](assets/walls_one_sided.gif)
+![top-down clip of the follower on walls_one_sided](assets/walls_one_sided_left.gif)
 
 ```bash
 # render one recorded run (uses docker/output/<name>_traj.csv etc.)
@@ -138,11 +149,9 @@ uv run --extra video worldgen video \
 uv run --extra video worldgen eval --video
 ```
 
-Everything is drawn in the **odom frame**. Wheel odometry drifts a few degrees
-relative to the Gazebo world and there is no world-pose topic in this sim, so
-painting the walls from the lidar keeps the robot, its scan, and the walls
-mutually consistent instead of registering odom against the static `.world`
-geometry.
+The walls are painted from the **lidar** rather than the static `.world`
+geometry, so the robot, its live scan, and the mapped walls stay mutually
+consistent in one frame (the path itself is the recorded ground-truth pose).
 
 Rendering is an **optional** feature. It needs `matplotlib` (the `video`
 extra) plus `ffmpeg` on PATH for mp4 output; without ffmpeg it falls back to an
@@ -153,18 +162,82 @@ animated GIF. The recorder (`docker/record_run.sh`) writes the three CSVs:
 > Use `uv run --extra video`, not `--with matplotlib`: the installed
 > `worldgen` entry point pins the project venv and ignores `--with` overlays.
 
-## Showcase: three followers on the generated suite
+## Showcase: the final follower (`left_wall_follower.py`)
 
-This is the whole point of worldgen: take a follower, throw a battery of
-generated courses at it, score every run, and watch where it breaks. Here are
-three versions of the same PID follower, recorded headless on five generated
-worlds and scored by the harness:
+The whole point of worldgen is to take a follower, throw a battery of generated
+courses at it, score every run, and watch where it breaks. The final follower,
+`left_wall_follower.py`, is one closed-loop PID with no corner state machine: a
+forward-biased line fit feeds a single PID, forward speed eases off in sharp
+turns so the lidar can pick up the wall on the far side, and the left turn at a
+wall end falls straight out of the control law. It is the only version that
+completes the entire generated battery and both branching mazes, with the lowest
+cte of the lot.
+
+| world | what it stresses | verdict | mean \|cte\| | completion |
+|-------|------------------|:-------:|----:|----:|
+| `gen_curve_left`  | constant 135° left arc          | PASS | 0.11 m | 100% |
+| `gen_serpentine`  | boustrophedon, repeated U-turns | PASS | 0.13 m | 100% |
+| `gen_gaps`        | doorway gaps (wall-loss)        | PASS | 0.16 m | 100% |
+| `gen_zigzag`      | zigzag, ±60° corners            | PASS | 0.23 m | 100% |
+| `gen_s_curve`     | gentle S-curve                  | PASS | 0.23 m | 100% |
+| `gen_gauntlet`    | mixed inside + outside corners  | PASS | 0.27 m | 100% |
+| `gen_maze_2x2`    | branching grid maze             | PASS | 0.20 m |  97% |
+| `gen_maze_3x3_s2` | branching grid maze             | PASS | 0.16 m | 100% |
+
+`mean |cte|` is over the on-course portion; PASS is > 90% complete, mean |cte| <
+0.3 m, and no stall. The two provided worlds (`walls_one_sided`,
+`walls_two_sided`) are closed loops it laps at mean |cte| ~0.10 m, median ~0.04 m.
+
+### gen_gauntlet — mixed inside and outside corners
+
+![left_wall_follower on gen_gauntlet](assets/gen_gauntlet_left.gif)
+
+### gen_gaps — doorway gaps, wall-loss and reacquire
+
+![left_wall_follower on gen_gaps](assets/gen_gaps_left.gif)
+
+### gen_serpentine — repeated U-turns around wall ends
+
+![left_wall_follower on gen_serpentine](assets/gen_serpentine_left.gif)
+
+### the rest of the suite
+
+<table><tr>
+<td align="center"><b>gen_zigzag</b><br><img src="assets/gen_zigzag_left.gif" width="250"></td>
+<td align="center"><b>gen_curve_left</b><br><img src="assets/gen_curve_left_left.gif" width="250"></td>
+<td align="center"><b>gen_s_curve</b><br><img src="assets/gen_s_curve_left.gif" width="250"></td>
+</tr></table>
+
+## Mazes: left-wall following is the left-hand rule
+
+Following the left wall everywhere is exactly the left-hand maze rule, so the
+follower tours a perfect maze on its own. `worldgen maze` builds a
+recursive-backtracker grid maze as wall boxes and exports the left-hand-rule
+route as the scoring path, aligned to the fixed spawn with a clean entrance stub:
+
+```bash
+uv run worldgen maze --cols 3 --rows 3 --cell 4.0 --seed 2   # -> gen_maze_3x3_s2
+uv run worldgen maze --cols 2 --rows 2 --cell 4.0            # -> gen_maze_2x2
+```
+
+<table><tr>
+<td align="center"><b>gen_maze_2x2</b><br><img src="assets/gen_maze_2x2_left.gif" width="300"></td>
+<td align="center"><b>gen_maze_3x3_s2</b><br><img src="assets/gen_maze_3x3_s2_left.gif" width="300"></td>
+</tr></table>
+
+## Appendix: how the follower evolved
+
+Before the final follower there were three earlier versions. They are kept as the
+honest record of what the harness turned up and fixed. The three-way comparison
+gifs get busy, so they live down here instead of up top.
 
 * **original** (`wall_follower_og.py`) — the handout's two-beam solution.
 * **improved** (`wall_follower.py`) — line-fit wall estimate, PID on curvature,
   inside-corner anticipation, a reacquire state for wall-loss.
 * **robust** (`robust_wall_follower.py`) — the improved follower with a
-  corner-hardened reacquire (see the diagnosis below).
+  corner-hardened open-loop reacquire (see the diagnosis below). It fixed the
+  gauntlet but introduced its own wall-end overshoots, which is what the final
+  closed-loop follower above removes.
 
 | world | what it stresses | original | improved | robust |
 |-------|------------------|----------|----------|--------|
@@ -259,9 +332,10 @@ the whole way.
 <td align="center"><b>robust</b><br><img src="assets/gen_s_curve_robust.gif" width="300"></td>
 </tr></table>
 
-To reproduce: record a follower on a world with `docker/run.sh record <world>
-<secs>` (improved), `record-og` (original) or `record-robust` (robust), then
-render each with `worldgen video` and score with `worldgen eval`.
+To reproduce: record a follower on a world with `docker/run.sh record-left
+<world> <secs>` (the final follower), or `record` / `record-og` / `record-robust`
+for the earlier ones, then render with `worldgen video` and score with
+`worldgen eval`.
 
 ## Using a single world interactively
 
